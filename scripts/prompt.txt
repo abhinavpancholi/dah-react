@@ -1,0 +1,392 @@
+<USER_REQUEST>
+# BUILD: Animal Husbandry, Fisheries & Co-Operatives Dashboard (GRIT / Viksit Gujarat Vision @2047)
+
+You are building a standalone React dashboard for the Animal Husbandry, Fisheries &
+Co-Operatives department. This is ONE-SHOT: build the whole dashboard (ETL + data layer + 6
+routes + all charts) in a single pass. Where this prompt states a DEFAULT, implement it and log
+it in a code comment tagged `// ASSUMPTION:` so I can review later. Do not stop to ask me
+questions mid-build; stop only if Step 0 shows something that makes the build impossible.
+
+## STEP 0 — EXPLORE FIRST, REPORT BACK BEFORE WRITING ANY CODE
+Do not hardcode any path or folder name you have not confirmed. Do all of this read-only first:
+
+A. LOCATE THE WCD REACT PROJECT ON THIS MACHINE'S DESKTOP (the existing WCD dashboard,
+   "Women & Child Development"). Confirm its exact folder name and that it is a React project.
+   Treat it as READ-ONLY: never modify, move or commit anything inside it. From it, extract and
+   report:
+   - the full design language: CSS / design tokens / theme files (colors, fonts, spacing, radii,
+     shadows), global stylesheet, and any CSS modules or styled-component themes
+   - the SIDEBAR implementation (dark navy background, nav item styles, active-state style,
+     counter tiles, how the sidebar behaves per page) — file names + the exact CSS
+   - the HEADER implementation (logos, title block, CM photo placement, layout, heights)
+   - the KPI card component(s) and their accent colors (teal / blue / purple / orange)
+   - the chart card / panel component (title bar, border, radius, background)
+   - the charting library in use and how charts are themed (reuse the SAME library, do not
+     introduce a second one)
+   - the data-loading pattern (offline ETL -> per-sheet JSON in a public/data-style folder;
+     a selector/aggregation layer `aggregations.js`; a shared Zustand store)
+   - the layout/scaling approach (fixed canvas vs responsive) and breakpoints
+   - Indian digit grouping helper (e.g. 1,49,500) and any shared formatters
+   - static assets available for reuse: GRIT logo, Gujarat state-map logo, CM photo,
+     background art, favicon
+B. Inspect the current working directory / repo for this new dashboard: is it empty or scaffolded?
+   What framework/bundler, package manager, Node version? Do not assume.
+C. Locate the source data files you were given (the workbook
+   `animal_husbandry_KPI_data_template.xlsx` and `gujarat_region_mapping.xlsx`) and confirm their
+   real locations and the exact sheet names via the file itself.
+D. REPORT BACK a short summary of A–C (tokens found, library, structure, asset inventory, what
+   is missing), then proceed straight to the build using the decisions below.
+
+VISUAL IDENTITY RULE: this dashboard must look like the WCD React dashboard — same dark navy
+sidebar, same header treatment, same KPI card style, same chart-card/panel style, same fonts,
+spacing and CSS tokens. Copy the WCD tokens/components INTO this new project (this repo must be
+self-contained and isolated: no imports from the WCD folder, no shared runtime dependency).
+The ONLY things taken from the Power BI screenshots are the LAYOUT, chart types, chart order,
+titles, KPI content, sidebar structure and FY-slicer placement (screenshots are a literal spec
+for structure, not for styling). Chart series encoding is the exception: keep the Power BI
+semantics — TARGET = light cyan, ACTUAL = dark navy — mapped to the nearest WCD tokens. Skip the
+faint cattle/fish sketch backgrounds that Power BI shows behind the charts; use WCD's plain chart
+card background instead (ASSUMPTION).
+
+## NAMING CONVENTION (strict)
+The workbook is organised into intervention-coded sheets. ALWAYS use the exact sheet codes in
+code, filenames, output JSON, store keys and comments — never descriptive names like
+"cages.json". Sheet codes: AIRD-06, AIRD-07, AIRD-08, AIRD-09, AIRD-10, AIRD-11, AIRD-15,
+AIRD-17, AIRD-22, AIRD-23_1, AIRD-23_2, AIRD-23_3, AIRD-24, AIRD-36, AIRD-37_1, AIRD-37_2,
+AIRD-50, AIRD-51, AIRD-54, AIRD-55_1, AIRD-55_2, AIRD-63, AIRD-71, AIRD-81, AIRD-93.
+Output files: `AIRD-06.json`, `AIRD-23_1.json`, etc. Identify each sheet by its SHEET NAME,
+never by its `Intervention_code` column (that column is unreliable — see gotchas).
+
+## DATA ARCHITECTURE (mirror WCD's pattern)
+1. Offline ETL script (Node or Python, whichever matches the repo/WCD approach) reads the
+   workbook once and writes one JSON per sheet into the project's static data folder
+   (confirm the folder convention from the WCD project). The browser never reads the .xlsx.
+2. `aggregations.js` is the ONLY place that computes KPIs and chart series. Components never
+   compute numbers.
+3. A Zustand store holds `selectedFY` (null | "2025-26" etc.). Nothing else is global.
+4. A single chart-registry config (one object per chart: id, page, title, sheet code, target
+   column, actual column, chart type, `cumulative` flag, label format, unit divisor, grid slot)
+   drives rendering, so every chart is generic and the 40-odd charts share 2–3 components.
+5. Keep district-grain rows in JSON for the 8 district sheets (AIRD-06, 07, 10, 11, 17, 23_3,
+   81, 93) even though no chart is district-level — and join `district_code` to
+   `gujarat_region_mapping.xlsx` (Region, District, District_Code) in the ETL so district/region
+   drill can be added later. Verified: the 33 district_codes in the workbook match the mapping
+   exactly. Always join on `district_code`, never on name strings.
+
+## ETL CLEANING RULES (verified against the actual file — implement all)
+- Drop fully blank rows (several sheets carry 20+ trailing empty rows) and drop any row whose FY
+  is null. Specifically AIRD-50 has a stray orphan cell `7` in the "Target No of Refrigerated
+  van" column on a row with no FY — it must NOT be summed or plotted.
+- Normalise nulls: real empty cells, the string `'-'`, `'NIL'` and `'NA'` all become a real null.
+  (AIRD-51 uses `'NIL'` for 2022-23..2024-25 actuals/targets and `'-'` for 2025-26 actual.)
+- Trim whitespace on all string fields; State has the typo `'Gujar`at'` in some rows of AIRD-09,
+  AIRD-23_1 and AIRD-71 — normalise to `Gujarat` (or ignore State entirely; it is always Gujarat).
+- `Intervention_code` is untrustworthy: AIRD-23_3 is mislabeled `'AIRD-06'` on every row; the
+  AIRD-23_x sheets all say `'AIRD-23'`; AIRD-55_x use `'AIRD-55_1'`/`'AIRD-55_2'`. Ignore the
+  column; the sheet name is the identity.
+- Column headers are messy: AIRD-22 contains non-breaking spaces and a zero-width space
+  (`Milk\xa0Procured\xa0by...\u200b`); AIRD-50 has double spaces (`Target  No of apmc  on e NAM
+  platform`) and trailing unnamed empty columns; AIRD-81 and AIRD-50 have trailing empty columns.
+  Normalise headers (collapse whitespace, strip zero-width/NBSP) and map to canonical snake_case
+  fields. Do not build on the empty trailing columns.
+- FY column is `FY` in all sheets, format `"2025-26"`. Canonical field `fy`.
+- ACTUALS ARE NOT REPORTED AFTER FY 2025-26: any Actual value for fy > "2025-26" must be null.
+  (AIRD-06 has one stray `0` actual in 2029-30 that would otherwise draw a fake zero bar.)
+  Define `LAST_REPORTED_FY = "2025-26"` as ONE constant in config and use it everywhere.
+- AIRD-22 SPECIAL CASE: Actual % columns are stored as FRACTIONS (0.4669 = 46.69%) while Target
+  % columns are stored as whole percents (46). Multiply Actual by 100. For fy >= 2025-26 the
+  Actual cells hold placeholder `0` values (formula artifacts — the underlying "Milk Procured by
+  Organized Sector" and "Installed Capacity" cells are blank) → treat those as null, NOT zero.
+- AIRD-06 UNIT TRAP: headers say "Lakhs" but values are raw counts (e.g. 4,862,684). Divide by
+  100000 for display (48.63 Lakh). AIRD-81, AIRD-63 (KCC) are already in Lakh — do NOT divide.
+  AIRD-55_2 "Value of Trade" is already in Rs Crore (float 1567.30…) — no conversion.
+  AIRD-63 interest subvention is already in Rs Crore.
+- AIRD-23_1 (Land Lease Policy of FLC) is a STATUS table, not numeric: values are `'No'` / null
+  per Quarter (Q1–Q4 per FY). Keep as status strings (enum: Yes/No/null).
+- AIRD-23_3: values are Metric Tonnes; column "Type of Cold Chain Infrastructure" is a label
+  ("Processing Plant and cold storage") — keep it for tooltips, sum capacity across districts.
+- AIRD-51 has a long `Remarks` column — keep it in JSON for the tooltip/info of the chart.
+- AIRD-71 (Dispute Resolution Platform, quarterly milestones) is 100% null and has NO screenshot
+  chart. Emit the JSON for completeness but build NOTHING on it.
+- Never ship raw sheets unnecessarily; these are all small (≤264 rows), so ship them as-is after
+  cleaning.
+
+## SHARED CHART LOGIC (implement ONCE in aggregations.js, driven by the registry)
+Every chart has a Target series and an Actual series over the FY axis
+(8 FYs: 2022-23 … 2029-30). Given a registry entry:
+1. STATE-LEVEL VALUE per FY: for district sheets = SUM across all 33 districts for that FY
+   (use null-preserving sum: if every row is null the result is null, not 0); for state-level
+   sheets = the single row's value.
+2. Apply `divisor` (AIRD-06 → 100000) and AIRD-22 percent rule.
+3. Actual for fy > LAST_REPORTED_FY → null.
+4. DROP LEADING EMPTY FYs: remove FYs from the left of the axis while BOTH target and actual are
+   0/null (this is why e.g. Super Intensive Aquaculture starts at 2025-26 and Broiler at
+   2024-25 in the screenshots). Do not drop in the middle or at the right.
+5. If `cumulative: true`: Target = running sum of per-FY targets (null counts as 0 in the sum);
+   Actual = running sum of per-FY actuals but ONLY for FYs where the Actual is non-null
+   (stop at the last reported FY — never carry the cumulative actual forward as a flat line).
+   Cumulative is applied AFTER step 4.
+6. Return `[{fy, target, actual}]`. Charts must show both the raw per-FY value and the cumulative
+   value in the tooltip when cumulative is true (tooltip: "FY 2025-26 · Cumulative target X ·
+   Cumulative actual Y · This year: target a / actual b").
+
+### CUMULATIVE FLAG PER CHART (each verified against the screenshots — do NOT guess)
+cumulative = TRUE:  AIRD-07 (both series), AIRD-08, AIRD-10, AIRD-11 (bio floc AND hatcheries),
+  AIRD-15, AIRD-17, AIRD-36 (all four charts), AIRD-37_1 FMD, AIRD-37_2, AIRD-54 (all four),
+  AIRD-63 (both), AIRD-81, AIRD-93.
+cumulative = FALSE: AIRD-06 (the chart is explicitly "YoY"), AIRD-09, AIRD-22 (both),
+  AIRD-23_2, AIRD-23_3, AIRD-24, AIRD-37_1 Super Intensive Aquaculture, AIRD-50 (all four),
+  AIRD-51, AIRD-55_1 (all three), AIRD-55_2 (all three).
+(Note the inconsistency is in the source data semantics — e.g. AIRD-15 is 5/yr → 5,10,15,20,25
+but AIRD-24 is 10/yr → stays 10,10,10,10. Follow this table exactly.)
+
+## GROUND TRUTH — expected output of the pipeline (assert these in a test file / dev check)
+Values after all rules above. "—" = null / not plotted. Indian grouping in the UI.
+
+AIRD-06 AI (Lakh, YoY, not cumulative)
+  Target: 42.00, 43.00, 45.00, 47.00, 47.25, 48.00, 48.50, 49.25 (22-23…29-30)
+  Actual: 48.63, 48.55, 46.50, 50.97, —, —, —, —   (screenshot labels 48.63/43.00/46.50/50.97;
+  note the 2023-24 actual is 48.55 — the screenshot's "48.55" label there is the actual)
+AIRD-07 Dairy farm 12 milch (cum): T 800,1650,2550,3475,4425,5400,6400,7450 | A 793,1908,2852,2995
+AIRD-07 Dairy farm 25–50 milch (cum; sheet column says "50 milch", screenshot title says
+  "25-50" — use the SCREENSHOT TITLE, ASSUMPTION): T 10,20,30,45,65,90,115,145 | A 5,13,17,17
+AIRD-08 Heifer Rearing Centre (cum, starts 2026-27): T 1,3,4,5 | A none
+AIRD-09 Brackish water saline land Ha (not cum, starts 2025-26): T 25000,50000,59750,69500,79250
+  | A 0 (2025-26 only)
+AIRD-10 Cages for fishing (cum): T 4309,7050,12453,13953,15453,17453,19453,20953
+  | A 3970,4546,9949,15033
+AIRD-11 Bio Floc Units (cum): T 8,10,12,22,32,47,62,77 | A 8,10,12,12
+AIRD-11 Hatcheries (cum): T 1,1,1,2,3,4,4,5 | A 1,1,1,2
+AIRD-15 Seed rearing area Ha (cum, from 2025-26): T 5,10,15,20,25 | A 0
+AIRD-17 Yearling (cum, from 2025-26): T 1000000,1200000,1400000,1650000,1850000 | A 0
+AIRD-22 % Milk Procurement in organized sector (NOT cum; Actual×100):
+  T 46,47,48,50,52,54,56,58 | A 46.69, 45.90, 45.64, —…   (UI shows integer % → 47%,46%,46%)
+AIRD-22 % Milk Processing capacity (NOT cum):
+  T 71.20,71.30,71.40,71.55,71.65,71.75,71.85,71.90 | A 71.17, 71.32, 69.52, —…  (2 decimals)
+AIRD-23_1 Land Lease Policy of FLC: 3 milestones (Draft Prepared, Stakeholder Consultation,
+  Policy Approval); every non-null status through 2025-26 Q3 is 'No'.
+AIRD-23_2 Fish Harbors & Landing Centers (not cum, from 2024-25): T 2,5,5,6,8,16 | A 0,1
+AIRD-23_3 Cold chain storage MT (not cum, ACTUAL ONLY, single navy series, no legend):
+  2022-23 86,800 · 2023-24 91,000 · 2024-25 94,500 (district-summed; no later FYs)
+AIRD-24 Training & capacity-building workshops (not cum): T 10,10,10,10 (2026-27…29-30) | A none
+AIRD-36 four charts (all cum, 2026-27…2029-30, no actuals):
+  Marine labs/breeding/culture units: 2,3,4,6
+  Research & disease diagnostic labs/hatcheries/demo/training centres: 2,4,5,7
+  Research units w/ state-of-art labs…entrepreneurship units: 3,5,7,10
+  Research centres/units/labs exclusively for fisheries resources mgmt: 2,3,5,7
+AIRD-37_1 Super Intensive Aquaculture (NOT cum, from 2025-26): T 10,20,30,40,50 | A 4
+AIRD-37_1 Districts with FMD Free Zone (cum, from 2028-29): T 1,2 | A none
+AIRD-37_2 GI Fish Seed Stocking (cum, from 2026-27): T 1,00,000 / 2,00,000 / 3,00,000 / 4,00,000
+AIRD-50 Markets for branding/packaging (not cum, from 2025-26): T 1,3,5,8,12 | A 1
+AIRD-50 Buyers registered on e-NAM: T 10,25,40,55,80 | A 71
+AIRD-50 APMCs integrated via e-NAM: T 15,33,51,71,91 | A 11
+AIRD-50 Refrigerated Van: T 1,1,3,5,5 | A 0
+AIRD-51 Farmers using data for price discovery: T 10,000 (2025-26 only) | A null
+  (2022-23…2024-25 'NIL' → dropped as leading-empty; 2025-26 actual '-' → null. Screenshot shows
+  a single target bar; put the Remarks text in an info tooltip.)
+AIRD-54 Broiler farm 1000 birds (cum, from 2024-25): T 30,105,185,270,365,465 | A 30,105
+AIRD-54 Processing plants new/upgradation GNFSU (cum, from 2023-24): T 2,7,23,25,27,29,31 | A 2,7,9
+AIRD-54 Units with value-added machineries (cum, from 2023-24): T 3,5,13,15,19,23,27 | A 3,5,10
+AIRD-54 Fish market establishments (cum, from 2023-24): T 1,2,3,4,5,6,7 | A 0,0,1
+AIRD-55_1 Marketing yards integrated: T 15,30,45,60,72 | A 11
+AIRD-55_1 Training & awareness camps ONLINE: T 8,10,15,20,25 | A 8
+AIRD-55_1 Training & awareness camps OFFLINE/physical: T 4,6,9,12,15 | A 1
+AIRD-55_2 Farmers registered on e-NAM: T 1,000 (2025-26 only) | A 103
+AIRD-55_2 Traders registered on e-NAM: T 800,1800,3000,4800,6800 | A 71
+AIRD-55_2 Value of trade on eNAM (Rs Cr): T 2000,4200,6700,9500,12500 | A 1,567 (1567.30)
+AIRD-63 KCC-AH livestock owners sanctioned (Lakh, cum): T 0.50,1.00,1.50,2.00,2.50,3.00,3.50,4.00
+  | A 0.70,1.15,2.23,3.81
+AIRD-63 Interest subvention on working-capital loans (Rs Cr, cum):
+  T 115,230,345,460,575,690,805,920 | A 114.76, 244.81, 278.98   (2025-26 actual null)
+AIRD-81 Minikits (Lakh, cum): T 0.76,1.56,2.37,4.08,4.94,5.79,6.65,7.50 | A 0.76,1.56,2.43,3.74
+AIRD-93 Chaff cutters owners (cum): T 1,940; 3,900; 5,790; 9,095; 11,945; 14,795; 17,645; 20,495
+  | A 1,347; 2,992; 4,626; 6,176
+
+## PAGES / ROUTES (sidebar order, exactly as in the screenshots)
+Summary · Overview · Animal Husbandry · Fisheries 1 · Fisheries 2 · Co-Operatives
+(Default route = Overview. Active item = bold + underlined as in Power BI, restyled in WCD's
+active-state treatment.)
+
+### Header (all pages)
+GRIT logo + Gujarat map logo on the left; centered 3-line title:
+"Gujarat Rajya Institution For Transformation" /
+"Animal Husbandry, Fisheries & Co-Operatives" / "Viksit Gujarat Vision @2047";
+CM photo block ("Shri Bhupendra Patel") on the right. Use WCD's header component structure and
+CSS. Reuse the GRIT logo, state-map logo and CM photo files from the WCD project (copy into this
+repo's assets). If any asset is missing, render a clearly labeled placeholder and list it in the
+build report — do not fetch from the internet.
+
+### Sidebar
+- OVERVIEW page sidebar: three counter tiles at the top (WCD counter-tile style):
+  "Interventions 25", "Actionable Steps 45", "KPIs 45" — HARDCODED constants in config
+  (ASSUMPTION: cannot be derived; the workbook has only 21 distinct AIRD sheet-codes, so the
+  numbers come from the department, not the data). Nav list below.
+- OTHER pages (Animal Husbandry, Fisheries 1, Fisheries 2, Co-Operatives): top of sidebar =
+  FY slicer, an 8-button grid in 2 columns × 4 rows: 2022-23 | 2023-24 / 2024-25 | 2025-26 /
+  2026-27 | 2027-28 / 2028-29 | 2029-30. Below it, a decorative illustration slot (cow + fish
+  motif in Power BI; use a WCD-style decorative element or leave an empty slot — ASSUMPTION), then
+  the nav list.
+
+### FY SLICER BEHAVIOUR — "relations between FY and all charts"
+`selectedFY` lives in the Zustand store, shared across pages 2–5, toggle-click (click selected FY
+again = clear). DEFAULT (ASSUMPTION, matches how roadmap/trend charts were treated elsewhere in
+this platform): FY selection is a HIGHLIGHT, never a filter — every chart keeps its full
+2022-23→2029-30 trajectory visible so the roadmap story is not lost.
+- Bar/column/horizontal-bar charts: bars for the selected FY at full opacity, all other bars
+  dimmed to ~35% opacity; data labels remain.
+- Line/area charts: a vertical marker/ring + enlarged dot on the selected FY point (both series),
+  other points dimmed; the area fill stays.
+- Charts whose axis does NOT contain the selected FY (e.g. Heifer Rearing starts 2026-27; AIRD-36
+  charts start 2026-27; Brackish starts 2025-26): dim the whole chart slightly and show a small
+  caption "No data for 2023-24" inside the card. Never hide or reflow the card.
+- CROSS-HIGHLIGHT: clicking a bar/point on ANY chart sets `selectedFY` to that FY (Power BI
+  behaviour), which highlights the same FY in every chart on the page and lights up the matching
+  button in the sidebar slicer. Clicking the highlighted FY again clears it.
+- Land Lease status table (AIRD-23_1): see its own rule below.
+- OVERVIEW PAGE: matches the screenshot — it has NO FY slicer. It does not respond to
+  `selectedFY` (ASSUMPTION; its KPI cards are lifetime figures). Selected FY persists in the
+  store when navigating, but Overview ignores it.
+
+## OVERVIEW PAGE (layout from screenshot 1)
+Row 1 — four KPI cards (WCD KPI-card style; use WCD accent tokens, one per card):
+ 1. "{194.6} Lakh Artificial Insemination performed in cattle across {8} districts for Higher
+    Milk Production" — value = SUM(AIRD-06 Actual, all reported FYs) / 1,00,000 = 194.64 (shown
+    194.6, 1 decimal). "{8}" = COUNT DISTINCT district_code in AIRD-06 where Actual > 0
+    (verified = 8) — compute it, don't hardcode.
+ 2. "{3.74} Lakh improved variety of fodder Seed Minikits distributed to livestock owners to
+    Enhance Fodder Production" — SUM(AIRD-81 Actual) = 3.740 (2 decimals).
+ 3. "{3.81} Lakh livestock owners sanctioned for KCC-AH to facilitate access to formal credit
+    sources" — SUM(AIRD-63 KCC Actual) = 3.81 (2 decimals).
+ 4. "{15,033} Cages installed across {6} districts for Cage Fishing" — SUM(AIRD-10 Actual) = 15,033;
+    "{6}" = COUNT DISTINCT district_code in AIRD-10 where Actual > 0 (verified = 6).
+ Under each card the subtitle "(2022-23 to 2025-26)" — DERIVE it: first FY with a non-null actual
+ to last FY with a non-null actual for that sheet (all four resolve to 2022-23 → 2025-26).
+Row 2 — panel titled "On Track KPIs" containing a 3 × 2 grid of charts:
+ Row A: "Number of Artificial Insemination (AI) Performed (in Lakh, YoY)" [AIRD-06, clustered
+        column] · "No of Beneficiary of Broiler Farm of 1000 Birds" [AIRD-54, clustered column] ·
+        "Number of Livestock Owners Sanctioned for KCC-AH (Lakh)" [AIRD-63, line+area]
+ Row B: "Number of Cages Installed for Fishing" [AIRD-10, clustered column] · "Number of
+        Hatcheries" [AIRD-11, line+area] · "Number of Buyer Register on e-NAM Platform" [AIRD-50,
+        clustered column]
+
+## ANIMAL HUSBANDRY PAGE (screenshot 2) — 3 × 3 grid
+1 "Number of Beneficiaries of Dairy Farm of 12 Milch Animals" [AIRD-07, line+area]
+2 "Number of Beneficiaries of Dairy Farm of 25-50 Milch Animals" [AIRD-07, horizontal bar]
+3 "Number of District with Foot and Mouth Disease Free Zone" [AIRD-37_1, horizontal bar]
+4 "Number of Heifer Rearing Centre" [AIRD-08, line+area]
+5 "No of Livestock Owners Benefitted for Power-Driven & Tractor-Operated Chaff Cutters"
+  [AIRD-93, column]
+6 "Number of Minikits (in Lakh)" [AIRD-81, column, 2-decimal labels]
+7 "% Milk Procurement in Organized Sector over Total Milk Production" [AIRD-22, column, integer %]
+8 "% Milk Processing Capacity over Total Milk Production" [AIRD-22, column, 2-decimal %]
+9 "Amount of Interest Subventions on Working Capital Loans (Rs. in Crore)" [AIRD-63, column;
+  target labels integer, actual labels 2-decimal]
+
+## FISHERIES 1 PAGE (screenshot 3)
+Row 1 (2 wide): "Identification of Suitable Brackish Water Saline Land (Hectare)" [AIRD-09, line+area] ·
+  "Area of Seed Rearing Space (Ha)" [AIRD-15, horizontal bar]
+Row 2 (2 wide): "Number of Bio Floc Units" [AIRD-11, column] · "Number of Yearling" [AIRD-17,
+  line+area]
+Row 3 (3 wide): "Number of Training and Capacity Building Workshop (YoY)" [AIRD-24, column] ·
+  "Number of Super Intensive Aquaculture Units" [AIRD-37_1, line+area] ·
+  "Number of GI Fish Seed Stocking" [AIRD-37_2, horizontal bar]
+
+## FISHERIES 2 PAGE (screenshot 4)
+Row 1 (3 across): "Introduction of Land Lease Policy of FLC" [AIRD-23_1, STATUS TABLE] ·
+  "Number of Fish Harbors and Fish Landing Centers" [AIRD-23_2, line+area] ·
+  "Storage Capacity of Cold Chain Infrastructure (MT)" [AIRD-23_3, horizontal bar, ACTUAL ONLY,
+  single navy series, no Target/Actual legend]
+Row 2 (4 across): "Number of Units with Value Added Machineries" [AIRD-54, column] ·
+  "No of Fish Market Establishments" [AIRD-54, column] · "Number of New/Upgradation Processing
+  Plants Working under GNFSU" [AIRD-54, column] · "Number of State of Art Research Laboratories /
+  Breeding / Culture Units of Marine Organisms / Seaweeds" [AIRD-36, column]
+Row 3 (3 across, first one wider): "No of Research Units with State of Art Labs/Disease
+  Diagnostic Centers/Fish Culture Demonstration Units Depict Modern Culture Technologies along
+  with Entrepreneurship Development Units" [AIRD-36, line+area] · "Number of State of Art
+  Research Centers / Units / Laboratories Exclusively for Fisheries Resources Management,
+  Conservation and Development" [AIRD-36, column] · "Number of State of Art Research & Disease
+  Diagnostic Laboratories / Laboratory Scale Hatcheries / Demonstration / Training Centers"
+  [AIRD-36, horizontal bar]
+LAND LEASE STATUS TABLE (AIRD-23_1): a 3-column header row (Land Lease Policy of FLC Draft
+  Prepared | Stakeholder Consultation | Policy Approval) with one status icon per column.
+  Rule (ASSUMPTION): status per milestone = the LATEST non-null quarter's value in scope; 'No' →
+  amber "!" circle (as in screenshot), 'Yes' → green check, no data → grey dash. Scope = latest
+  non-null overall when no FY selected; when an FY is selected, the latest non-null quarter
+  WITHIN that FY (grey dash + "No data" if the FY has none, e.g. 2026-27 onward). Currently all
+  three resolve to amber "!" (latest non-null is 2025-26 Q3 = 'No').
+
+## CO-OPERATIVES PAGE (screenshot 5)
+Row 1 (4 across): "Number of Markets for Branding / Packaging and Selling" [AIRD-50, line+area] ·
+  "Number of Refrigerated Van" [AIRD-50, horizontal bar] · "Number of Training and Awareness Camp
+  (Offline/Physical)" [AIRD-55_1, line+area] · "Number of Training and Awareness Camp (Online)"
+  [AIRD-55_1, column]
+Row 2: "Number of Farmers Registered on e-NAM" [AIRD-55_2, wide horizontal bar] ·
+  "Number of Traders Registered on e-NAM" [AIRD-55_2, column] · "Value of Trade on eNAM
+  (Rs. in Cr)" [AIRD-55_2, line+area]
+Row 3: "Number of APMCs Integrated via e-NAM Portal" [AIRD-50, line+area] · "Number of Farmers
+  Using Data for Better Price Discovery" [AIRD-51, horizontal bar, target only] ·
+  "Number of Marketing Yard Integrated" [AIRD-55_1, column, wide]
+
+## SUMMARY PAGE
+There is NO screenshot and NO data spec for "Summary". Build the route and sidebar item, render
+a WCD-style empty-state card "Summary page — design pending" (ASSUMPTION; do not invent content).
+
+## CHART STYLE RULES (platform-wide conventions)
+- NO y-axis ticks and NO gridlines on any chart — data-label-only, as in Power BI. X-axis shows
+  FY labels.
+- Legend "Target ● Actual ●" above each chart (except AIRD-23_3 cold chain: no legend).
+- Chart types: "column" = clustered vertical bars, Target light cyan + Actual dark navy,
+  overlapped like Power BI (Actual drawn over/next to Target); "bar" = same horizontal, FY on the
+  y-axis, newest FY at the bottom; "line+area" = Target as DOTTED light-cyan line with a very
+  light cyan area fill, Actual as SOLID navy line with its own lighter fill, dots at every point.
+  The x-axis of a line/column/bar chart includes only the FYs surviving the leading-empty rule.
+- Where Actual is null for an FY, draw nothing for Actual (never a zero bar/point). Where Actual
+  is a real 0 (AIRD-09, AIRD-15, AIRD-17, AIRD-50 van, AIRD-54 fish market, AIRD-23_2 2024-25),
+  draw the 0 label and a baseline dot — real zeros are data.
+- Indian digit grouping everywhere (1,49,500 · 14,00,000 · 86,800). Decimal rules per chart as
+  listed (AIRD-06/81/63 KCC 2-dec; AIRD-22 procurement integer %, processing 2-dec %;
+  AIRD-63 interest actual 2-dec; value of trade integer).
+- Chart card = WCD chart-card component (title bar + border + radius from WCD tokens). Long
+  titles (the AIRD-36 ones) wrap to 2–3 lines inside the title bar; don't truncate.
+- Data labels must not overlap awkwardly — dim labels for non-highlighted FYs when a FY is
+  selected, and nudge actual/target labels apart where both are present.
+
+## ALL FLAGGED ASSUMPTIONS TO LOG IN CODE (// ASSUMPTION: …)
+1. FY slicer is highlight-not-filter and shared across pages 2–5; Overview ignores it.
+2. Sidebar counters 25/45/45 hardcoded.
+3. Summary page is an empty-state placeholder.
+4. No district/region UI in this build (screenshots have none); district rows + region join are
+   kept in JSON for future drill.
+5. "25-50 Milch Animals" title taken from screenshot though the sheet column says "50".
+6. Land-lease status rule (latest non-null quarter; Yes=green check, No=amber "!", none=grey dash).
+7. Skipped Power BI cattle/fish sketch backgrounds; used WCD chart-card background.
+8. Cumulative flag per chart set from screenshot reconciliation (table above).
+9. Leading-empty-FY drop rule and LAST_REPORTED_FY = "2025-26" cutoff for actuals.
+10. AIRD-22 actual placeholders (0 from 2025-26 on) treated as null.
+11. AIRD-71 not built (empty sheet, no screenshot chart).
+12. Header/sidebar art assets reused from WCD project or labeled placeholders.
+
+## TESTS / SELF-CHECK
+Write a small test or dev-only assertion module that runs the ground-truth table above through
+`aggregations.js` and fails loudly on any mismatch (all 4 overview KPI cards included:
+194.64 Lakh / 8 districts, 3.74, 3.81, 15,033 / 6 districts).
+
+## FINAL BUILD REPORT (required at the end)
+Return: (1) Step-0 findings (WCD folder name found, tokens/components reused, charting library);
+(2) file/folder tree you created; (3) ETL output file list (one JSON per AIRD sheet code) with
+row counts; (4) the ground-truth check results (pass/fail per chart + 4 KPI cards);
+(5) every `// ASSUMPTION:` you wrote; (6) any missing assets/placeholders; (7) anything in the
+screenshots with no matching data or vice versa that I should decide on; (8) how to run the ETL,
+the dev server and the tests.@[c:\Users\abhin\OneDrive\Desktop\DAH-react\animal husbandry KPI data template.xlsx] 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-27T12:37:26+05:30.
+
+The user has mentioned some items in the form @[ITEM]. Here is extra information about the items that were mentioned by the user, in the order that they appear:
+
+@[c:\Users\abhin\OneDrive\Desktop\DAH-react\animal husbandry KPI data template.xlsx] is a [File]:
+c:\Users\abhin\OneDrive\Desktop\DAH-react\animal husbandry KPI data template.xlsx
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to Claude Opus 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>
